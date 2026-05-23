@@ -62,3 +62,31 @@ crontab -e    # edit or remove
 ## Multi-student accounts
 
 If your portal account has more than one student, set `STUDENT_TARGET_NAME` to the full name of the student you want — exactly as it appears in the portal switcher. The script will select that student automatically.
+
+## Using with Claude Code
+
+This repo includes a `CLAUDE.md` file that gives Claude Code full context on how the portal works, how the scraper is structured, and where the tricky bits are (SSO flow, iframe navigation, semester filtering, etc.). That means you can open the project in Claude Code and just describe what you want in plain English.
+
+**Install Claude Code** if you haven't already:
+
+```bash
+npm install -g @anthropic-ai/claude-code
+```
+
+**Open the project:**
+
+```bash
+cd dps-daily-summary
+claude
+```
+
+**Things you can ask Claude Code to do:**
+
+- `Run the daily summary` — executes the script and reports results
+- `Add my partner's email to the recipient list` — updates `.env`
+- `Only show assignments due in the next 7 days instead of 14` — modifies the upcoming window
+- `The login is failing, help me debug it` — investigates and fixes auth issues
+- `Email me on Mondays only` — updates the cron schedule
+- `Add a section showing GPA trend over the last 4 weeks` — extends the scraper
+
+Claude Code reads `CLAUDE.md` automatically, so it already knows the portal's SSO flow, which iframe the assignments live in, how semester filtering works, and other details that would otherwise take time to figure out from the code.
