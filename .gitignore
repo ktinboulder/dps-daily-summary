@@ -1,0 +1,22 @@
+# Credentials — never commit
+.env
+
+# Playwright debug screenshots
+*.png
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+venv/
+env/
+
+# Logs
+*.log
+
+# macOS
+.DS_Store
+
+# VS Code
+.vscode/
