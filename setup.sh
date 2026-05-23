@@ -92,12 +92,19 @@ else
   echo "  ✓ Cron job added: runs every day at 7:00 PM"
 fi
 
+# Restrict log file to owner-only access
+touch "$LOG_PATH"
+chmod 600 "$LOG_PATH"
+
 # ── Summary ───────────────────────────────────────────────────────────────────
+# Read recipient from .env for display (avoid hardcoding PII in this script)
+RECIPIENT=$(grep -E '^RECIPIENT_EMAIL=' "$ENV_PATH" 2>/dev/null | head -1 | cut -d= -f2- | tr ',' ' ' | awk '{print $1}')
+
 echo ""
 echo "═══════════════════════════════════════════════════"
 echo "  ✓ Setup complete!"
 echo ""
-echo "  The summary will email to: kelly.taylor@gmail.com"
+echo "  The summary will email to: ${RECIPIENT:-<see RECIPIENT_EMAIL in .env>}"
 echo "  Schedule: Every day at 7:00 PM"
 echo "  Log file: $LOG_PATH"
 echo ""

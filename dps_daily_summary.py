@@ -10,6 +10,7 @@ Run:    python dps_daily_summary.py
 """
 
 import asyncio
+import html as html_mod
 import os
 import sys
 import smtplib
@@ -38,8 +39,9 @@ DPS_USERNAME    = os.getenv("DPS_USERNAME",      "")
 DPS_PASSWORD    = os.getenv("DPS_PASSWORD",      "")
 GMAIL_EMAIL     = os.getenv("GMAIL_EMAIL",       "")
 GMAIL_APP_PW    = os.getenv("GMAIL_APP_PASSWORD","")
-RECIPIENT_EMAILS = [e.strip() for e in os.getenv("RECIPIENT_EMAIL", "").split(",") if e.strip()]
-STUDENT_NAME    = os.getenv("STUDENT_NAME",      "Student")
+RECIPIENT_EMAILS    = [e.strip() for e in os.getenv("RECIPIENT_EMAIL", "").split(",") if e.strip()]
+STUDENT_NAME        = os.getenv("STUDENT_NAME",        "Student")
+STUDENT_TARGET_NAME = os.getenv("STUDENT_TARGET_NAME", "")
 
 # ── Portal URLs ───────────────────────────────────────────────────────────────
 BASE      = "https://portal.dpsk12.org/group/parent-portal"
@@ -274,9 +276,9 @@ async def scrape_portal() -> dict:
                 app_frame = next((f for f in frames if "apps/portal/parent" in f.url), None)
 
                 if app_frame:
-                    # Switch to Will if multiple students on account
+                    # Switch to target student if multiple students on account
                     page_text = await app_frame.inner_text("body")
-                    if "William" not in page_text:
+                    if STUDENT_TARGET_NAME and STUDENT_TARGET_NAME not in page_text:
                         # Click whatever student name is currently shown to open switcher
                         try:
                             btns = await app_frame.query_selector_all("button, [tabindex='0']")
@@ -289,7 +291,7 @@ async def scrape_portal() -> dict:
                         except Exception:
                             pass
                         try:
-                            await app_frame.click("text=William B. Taylor", timeout=4000)
+                            await app_frame.click(f"text={STUDENT_TARGET_NAME}", timeout=4000)
                             await app_frame.wait_for_timeout(3000)
                         except Exception:
                             pass
@@ -374,19 +376,19 @@ async def scrape_portal() -> dict:
 
 # ── HTML email builder ────────────────────────────────────────────────────────
 def build_email_html(data: dict) -> str:
-    date_str = data.get("date", datetime.now().strftime("%A, %B %d, %Y"))
-    student  = data.get("student_name", "Your Child")
-    gpa      = data.get("gpa", "")
-    error    = data.get("error")
+    date_str = html_mod.escape(data.get("date", datetime.now().strftime("%A, %B %d, %Y")))
+    student  = html_mod.escape(data.get("student_name", "Your Child"))
+    gpa      = html_mod.escape(data.get("gpa", ""))
+    error    = html_mod.escape(data.get("error") or "") or None
 
     # ── Missing assignments section
     missing = data.get("missing_assignments", [])
     if missing:
         miss_rows = "".join(
             f'<tr style="border-bottom:1px solid #fecaca;">'
-            f'<td style="padding:8px 12px;font-size:13px;color:#991b1b;">{a["assignment"]}</td>'
-            f'<td style="padding:8px 12px;font-size:13px;color:#6b7280;">{_short_course(a["course"])}</td>'
-            f'<td style="padding:8px 12px;font-size:13px;color:#6b7280;white-space:nowrap;">{a["due"]}</td>'
+            f'<td style="padding:8px 12px;font-size:13px;color:#991b1b;">{html_mod.escape(a["assignment"])}</td>'
+            f'<td style="padding:8px 12px;font-size:13px;color:#6b7280;">{html_mod.escape(_short_course(a["course"]))}</td>'
+            f'<td style="padding:8px 12px;font-size:13px;color:#6b7280;white-space:nowrap;">{html_mod.escape(a["due"])}</td>'
             f'</tr>'
             for a in missing
         )
@@ -414,10 +416,10 @@ def build_email_html(data: dict) -> str:
     if grades:
         grade_rows = "".join(
             f'<tr style="border-bottom:1px solid #f3f4f6;">'
-            f'<td style="padding:8px 12px;font-size:13px;">{_short_course(g["course"])}</td>'
+            f'<td style="padding:8px 12px;font-size:13px;">{html_mod.escape(_short_course(g["course"]))}</td>'
             f'<td style="padding:8px 12px;font-size:14px;font-weight:700;text-align:center;'
-            f'color:{_grade_color(g["grade"])};">{g["grade"]}</td>'
-            f'<td style="padding:8px 12px;font-size:13px;text-align:right;color:#6b7280;">{g["pct"]}</td>'
+            f'color:{_grade_color(g["grade"])};">{html_mod.escape(g["grade"])}</td>'
+            f'<td style="padding:8px 12px;font-size:13px;text-align:right;color:#6b7280;">{html_mod.escape(g["pct"])}</td>'
             f'</tr>'
             for g in grades
         )
@@ -441,7 +443,7 @@ def build_email_html(data: dict) -> str:
     if absences:
         abs_rows = "".join(
             f'<tr style="border-bottom:1px solid #f3f4f6;">'
-            f'<td style="padding:7px 12px;font-size:13px;">{_short_course(a["course"])}</td>'
+            f'<td style="padding:7px 12px;font-size:13px;">{html_mod.escape(_short_course(a["course"]))}</td>'
             f'<td style="padding:7px 12px;font-size:13px;text-align:center;'
             f'color:{"#dc2626" if a["absences"]>2 else "#d97706" if a["absences"]>0 else "#16a34a"};">'
             f'{a["absences"]}</td>'
@@ -468,9 +470,9 @@ def build_email_html(data: dict) -> str:
     if upcoming:
         up_rows = "".join(
             f'<tr style="border-bottom:1px solid #f3f4f6;">'
-            f'<td style="padding:7px 12px;font-size:13px;">{a["assignment"]}</td>'
-            f'<td style="padding:7px 12px;font-size:13px;color:#6b7280;">{_short_course(a["course"])}</td>'
-            f'<td style="padding:7px 12px;font-size:13px;color:#6b7280;white-space:nowrap;">{a["due"]}</td>'
+            f'<td style="padding:7px 12px;font-size:13px;">{html_mod.escape(a["assignment"])}</td>'
+            f'<td style="padding:7px 12px;font-size:13px;color:#6b7280;">{html_mod.escape(_short_course(a["course"]))}</td>'
+            f'<td style="padding:7px 12px;font-size:13px;color:#6b7280;white-space:nowrap;">{html_mod.escape(a["due"])}</td>'
             f'</tr>'
             for a in upcoming
         )
@@ -533,7 +535,7 @@ def build_email_html(data: dict) -> str:
   <div style="padding:18px 24px;border-bottom:1px solid #e5e7eb;">
     <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;">
       <span style="font-size:16px;font-weight:700;color:#111827;">🗓️ Absences This Semester</span>
-      {"<span style='font-size:13px;color:#6b7280;'>Attendance rate: " + att_rate + "</span>" if att_rate else ""}
+      {"<span style='font-size:13px;color:#6b7280;'>Attendance rate: " + html_mod.escape(att_rate) + "</span>" if att_rate else ""}
     </div>
     {abs_html}
   </div>
