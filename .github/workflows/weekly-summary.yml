@@ -1,0 +1,35 @@
+name: Weekly School Summary
+
+on:
+  schedule:
+    - cron: '0 19 * * 0'  # Every Sunday at 1 PM MDT (7 PM UTC)
+  workflow_dispatch:       # Allow manual trigger from GitHub UI
+
+jobs:
+  send-summary:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          pip install playwright python-dotenv
+          playwright install chromium
+          playwright install-deps chromium
+
+      - name: Run summary
+        env:
+          DPS_USERNAME:        ${{ secrets.DPS_USERNAME }}
+          DPS_PASSWORD:        ${{ secrets.DPS_PASSWORD }}
+          GMAIL_EMAIL:         ${{ secrets.GMAIL_EMAIL }}
+          GMAIL_APP_PASSWORD:  ${{ secrets.GMAIL_APP_PASSWORD }}
+          RECIPIENT_EMAIL:     ${{ secrets.RECIPIENT_EMAIL }}
+          STUDENT_NAME:        ${{ secrets.STUDENT_NAME }}
+          STUDENT_TARGET_NAME: ${{ secrets.STUDENT_TARGET_NAME }}
+        run: python3 dps_daily_summary.py
