@@ -36,8 +36,8 @@ DPS_PASSWORD=your_infinite_campus_password
 GMAIL_EMAIL=you@gmail.com
 GMAIL_APP_PASSWORD=xxxx-xxxx-xxxx-xxxx
 RECIPIENT_EMAIL=you@gmail.com,spouse@gmail.com,grandma@yahoo.com
-STUDENT_NAME=Will
-STUDENT_TARGET_NAME=William B. Taylor
+STUDENT_NAME=Alex
+STUDENT_TARGET_NAME=Alex J. Smith
 ```
 
 - **`RECIPIENT_EMAIL`** accepts a comma-separated list — send it to the whole family.
