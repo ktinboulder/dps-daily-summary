@@ -38,7 +38,7 @@ DPS_USERNAME    = os.getenv("DPS_USERNAME",      "")
 DPS_PASSWORD    = os.getenv("DPS_PASSWORD",      "")
 GMAIL_EMAIL     = os.getenv("GMAIL_EMAIL",       "")
 GMAIL_APP_PW    = os.getenv("GMAIL_APP_PASSWORD","")
-RECIPIENT_EMAIL = os.getenv("RECIPIENT_EMAIL",   "")
+RECIPIENT_EMAILS = [e.strip() for e in os.getenv("RECIPIENT_EMAIL", "").split(",") if e.strip()]
 STUDENT_NAME    = os.getenv("STUDENT_NAME",      "Student")
 
 # ── Portal URLs ───────────────────────────────────────────────────────────────
@@ -111,7 +111,7 @@ def _parse_ic_assignments(text: str, min_date, max_date, exclude_batch_date=None
     return unique
 
 
-def _parse_ic_missing_flagged(text: str) -> list:
+def _parse_ic_missing_flagged(text: str, min_date=None) -> list:
     """Extract assignments explicitly marked MISSING in IC."""
     lines = [l.strip() for l in text.split('\n') if l.strip()]
     results = []
@@ -129,6 +129,9 @@ def _parse_ic_missing_flagged(text: str) -> list:
             except ValueError:
                 pass
         elif line == 'Assignment' and current_date and i + 2 < len(lines):
+            if min_date and current_date < min_date:
+                i += 1
+                continue
             name   = lines[i + 1]
             course = lines[i + 2]
             # Check if MISSING flag appears nearby
@@ -189,6 +192,15 @@ async def scrape_portal() -> dict:
             await page.wait_for_timeout(2000)
 
             body = await page.inner_text("body")
+
+            # Parse S2 start date from "S2 MM/DD/YYYY - MM/DD/YYYY" header
+            s2_start = None
+            s2_m = re.search(r'S2\s+(\d{1,2}/\d{1,2}/\d{4})', body)
+            if s2_m:
+                try:
+                    s2_start = datetime.strptime(s2_m.group(1), "%m/%d/%Y").date()
+                except ValueError:
+                    pass
 
             # GPA
             gpa_m = re.search(r"([\d.]+)\s*GPA", body)
@@ -288,9 +300,9 @@ async def scrape_portal() -> dict:
                     missing_text = await app_frame.inner_text("body")
 
                     # Parse date + assignment + course from missing list
-                    missing_detail = _parse_ic_assignments(missing_text, min_date=None, max_date=today)
+                    missing_detail = _parse_ic_assignments(missing_text, min_date=s2_start, max_date=today)
                     # Also include any flagged MISSING regardless of date
-                    missing_raw = _parse_ic_missing_flagged(missing_text)
+                    missing_raw = _parse_ic_missing_flagged(missing_text, min_date=s2_start)
                     if missing_raw:
                         missing_detail = missing_raw
                     if missing_detail:
@@ -559,13 +571,16 @@ def send_email(html: str, subject_date: str) -> None:
     msg = MIMEMultipart("alternative")
     msg["Subject"] = f"📚 Daily School Summary — {STUDENT_NAME} — {subject_date}"
     msg["From"]    = GMAIL_EMAIL
-    msg["To"]      = RECIPIENT_EMAIL
+    msg["To"]      = ", ".join(RECIPIENT_EMAILS)
     msg.attach(MIMEText(html, "html"))
 
-    print(f"→ Sending email to {RECIPIENT_EMAIL}…")
-    with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
+    print(f"→ Sending email to {', '.join(RECIPIENT_EMAILS)}…")
+    with smtplib.SMTP("smtp.gmail.com", 587) as server:
+        server.ehlo()
+        server.starttls()
+        server.ehlo()
         server.login(GMAIL_EMAIL, GMAIL_APP_PW)
-        server.sendmail(GMAIL_EMAIL, RECIPIENT_EMAIL, msg.as_string())
+        server.sendmail(GMAIL_EMAIL, RECIPIENT_EMAILS, msg.as_string())
     print("→ Email sent!")
 
 
