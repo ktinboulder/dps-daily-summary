@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-DPS Daily School Summary
-────────────────────────
+DPS Weekly School Summary
+─────────────────────────
 Logs into the Denver Public Schools parent portal (portal.dpsk12.org),
 extracts missing assignments, current grades, absences, and upcoming
 assignments for each configured student, then emails a formatted HTML summary.
@@ -551,7 +551,7 @@ def build_email_html(data: dict) -> str:
 
   <!-- Header -->
   <div style="background:linear-gradient(135deg,#1e3a8a,#2563eb);color:#fff;padding:26px 24px;">
-    <div style="font-size:24px;font-weight:700;margin-bottom:4px;">📚 Daily School Summary</div>
+    <div style="font-size:24px;font-weight:700;margin-bottom:4px;">📚 Weekly School Summary</div>
     <div style="opacity:0.9;font-size:14px;">{student} · {date_str}{gpa_block}</div>
     {school_line}
   </div>
@@ -614,7 +614,7 @@ def _grade_color(letter: str) -> str:
 # ── Email sender ──────────────────────────────────────────────────────────────
 def send_email(html: str, student_name: str, subject_date: str, recipients: list) -> None:
     msg = MIMEMultipart("alternative")
-    msg["Subject"] = f"📚 Daily School Summary — {student_name} — {subject_date}"
+    msg["Subject"] = f"📚 Weekly School Summary — {student_name} — {subject_date}"
     msg["From"]    = GMAIL_EMAIL
     msg["To"]      = ", ".join(recipients)
     msg.attach(MIMEText(html, "html"))
@@ -632,7 +632,7 @@ def send_email(html: str, student_name: str, subject_date: str, recipients: list
 # ── Entry point ───────────────────────────────────────────────────────────────
 async def main() -> None:
     print(f"\n{'='*55}")
-    print(f"  DPS Daily School Summary  ·  {datetime.now():%Y-%m-%d %H:%M}")
+    print(f"  DPS Weekly School Summary  ·  {datetime.now():%Y-%m-%d %H:%M}")
     print(f"{'='*55}\n")
 
     all_data = await scrape_all_students()

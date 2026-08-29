@@ -1,6 +1,6 @@
 #!/bin/bash
 # ─────────────────────────────────────────────────────────────────────────────
-#  DPS Daily School Summary — One-Time Setup Script
+#  DPS Weekly School Summary — One-Time Setup Script
 #  Run this once to install dependencies and schedule the daily 7 PM email.
 #
 #  Usage:
@@ -17,7 +17,7 @@ LOG_PATH="$SCRIPT_DIR/dps_summary.log"
 
 echo ""
 echo "═══════════════════════════════════════════════════"
-echo "  DPS Daily School Summary — Setup"
+echo "  DPS Weekly School Summary — Setup"
 echo "═══════════════════════════════════════════════════"
 echo ""
 

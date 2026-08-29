@@ -1,4 +1,4 @@
-# DPS Daily School Summary
+# DPS Weekly School Summary
 
 A Python + Playwright script that logs into the Denver Public Schools Parent Portal (`portal.dpsk12.org`), scrapes school data for a student, and emails a formatted HTML daily summary.
 
@@ -59,7 +59,7 @@ CLAUDE.md              # This file
 ### Missing & Upcoming Assignments (Infinite Campus)
 - Navigate to `campus.dpsk12.org/campus/icprod.jsp`, click "Assignments"
 - Content lives in an **iframe** — find it via `page.frames` matching `apps/portal/parent` in URL
-- Multi-student accounts: click the student name button to open the switcher, then click "William B. Taylor"
+- Multi-student accounts: click the student name button to open the switcher, then click the target student's full name (as set in `STUDENT_N_TARGET_NAME`)
 - IC assignment filters are **toggles** that combine additively:
   - Click "Missing" → shows missing only
   - Deselect "Missing" (click again), then click "Current Term" → shows all current-term assignments
@@ -74,8 +74,8 @@ CLAUDE.md              # This file
 - HTML email with color-coded grade table, red missing-assignments table, attendance table, upcoming table
 
 ### Multi-Student Account
-- This account has two students: Kathryn R. Taylor (Northfield HS) and William B. Taylor (DSA HS, Grade 09)
-- The script targets William B. Taylor — the student-switcher logic handles this automatically
+- Supports any number of students via numbered `STUDENT_N_*` env vars
+- The script logs in once and scrapes each student sequentially, switching via the IC student-switcher as needed
 
 ## Dependencies
 

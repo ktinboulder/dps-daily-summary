@@ -1,6 +1,6 @@
-# DPS Daily School Summary
+# DPS Weekly School Summary
 
-Quick daily/weekly check-in for your kid's Denver Public Schools grades. Logs in, pulls grades and attendance, and emails a summary to the whole family. No more "how are your classes going?" with mysterious silence as the answer.
+Weekly check-in for your kid's Denver Public Schools grades. Logs in, pulls grades and attendance, and emails a summary to the whole family. No more "how are your classes going?" with mysterious silence as the answer.
 
 ## What you get
 
