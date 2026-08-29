@@ -4,7 +4,7 @@ DPS Daily School Summary
 ────────────────────────
 Logs into the Denver Public Schools parent portal (portal.dpsk12.org),
 extracts missing assignments, current grades, absences, and upcoming
-assignments for Will, then emails a formatted HTML summary.
+assignments for each configured student, then emails a formatted HTML summary.
 
 Run:    python dps_daily_summary.py
 """
@@ -35,19 +35,47 @@ except ImportError:
     sys.exit(1)
 
 # ── Configuration ─────────────────────────────────────────────────────────────
-DPS_USERNAME    = os.getenv("DPS_USERNAME",      "")
-DPS_PASSWORD    = os.getenv("DPS_PASSWORD",      "")
-GMAIL_EMAIL     = os.getenv("GMAIL_EMAIL",       "")
-GMAIL_APP_PW    = os.getenv("GMAIL_APP_PASSWORD","")
-RECIPIENT_EMAILS    = [e.strip() for e in os.getenv("RECIPIENT_EMAIL", "").split(",") if e.strip()]
-STUDENT_NAME        = os.getenv("STUDENT_NAME",        "Student")
-STUDENT_TARGET_NAME = os.getenv("STUDENT_TARGET_NAME", "")
+DPS_USERNAME     = os.getenv("DPS_USERNAME",      "")
+DPS_PASSWORD     = os.getenv("DPS_PASSWORD",      "")
+GMAIL_EMAIL      = os.getenv("GMAIL_EMAIL",       "")
+GMAIL_APP_PW     = os.getenv("GMAIL_APP_PASSWORD","")
+RECIPIENT_EMAILS = [e.strip() for e in os.getenv("RECIPIENT_EMAIL", "").split(",") if e.strip()]
+
+
+def _load_students() -> list:
+    """Build student list from STUDENT_N_* env vars, falling back to legacy single-student vars."""
+    students = []
+    i = 1
+    while True:
+        name = os.getenv(f"STUDENT_{i}_NAME", "").strip()
+        if not name:
+            break
+        extra = [e.strip() for e in os.getenv(f"STUDENT_{i}_RECIPIENTS", "").split(",") if e.strip()]
+        students.append({
+            "name":       name,
+            "target":     os.getenv(f"STUDENT_{i}_TARGET_NAME", "").strip(),
+            "school":     os.getenv(f"STUDENT_{i}_SCHOOL", "").strip(),
+            "grade":      os.getenv(f"STUDENT_{i}_GRADE",  "").strip(),
+            "recipients": extra,
+        })
+        i += 1
+    if not students:
+        # Legacy single-student config
+        students.append({
+            "name":       os.getenv("STUDENT_NAME", "Student").strip(),
+            "target":     os.getenv("STUDENT_TARGET_NAME", "").strip(),
+            "school":     "",
+            "grade":      "",
+            "recipients": [],
+        })
+    return students
+
+STUDENTS = _load_students()
 
 # ── Portal URLs ───────────────────────────────────────────────────────────────
-BASE      = "https://portal.dpsk12.org/group/parent-portal"
-HOME_URL  = BASE
-GRADE_URL = BASE + "/view-current-grades"
-ATT_URL   = BASE + "/check-attendance-details"
+BASE     = "https://portal.dpsk12.org/group/parent-portal"
+HOME_URL = BASE
+ATT_URL  = BASE + "/check-attendance-details"
 
 
 # ── Login helper ──────────────────────────────────────────────────────────────
@@ -62,6 +90,25 @@ async def _login(page) -> None:
     await page.wait_for_timeout(3000)
     if "adfs" in page.url:
         raise RuntimeError("Login failed — check DPS_USERNAME / DPS_PASSWORD in your .env")
+
+
+async def _switch_portal_student(page, target_name: str) -> None:
+    """Switch the portal to the given student if a switcher is present."""
+    if not target_name:
+        return
+    try:
+        body_text = await page.inner_text("body")
+        if target_name in body_text:
+            return
+        btns = await page.query_selector_all("button, a[role='tab'], .student-name")
+        for btn in btns[:10]:
+            txt = (await btn.inner_text()).strip()
+            if txt and target_name.split()[0] in txt:
+                await btn.click()
+                await page.wait_for_timeout(2000)
+                return
+    except Exception:
+        pass
 
 
 # ── IC assignment text parsers ────────────────────────────────────────────────
@@ -93,7 +140,6 @@ def _parse_ic_assignments(text: str, min_date, max_date, exclude_batch_date=None
             if in_range and i + 2 < len(lines):
                 name   = lines[i + 1]
                 course = lines[i + 2]
-                # Skip if next line looks like metadata rather than a course
                 if not course.startswith('Score') and not course.startswith('Assignment') \
                         and not course.startswith('Comments') and not course.startswith('TODAY'):
                     results.append({
@@ -102,7 +148,6 @@ def _parse_ic_assignments(text: str, min_date, max_date, exclude_batch_date=None
                         "due":        current_date.strftime("%m/%d/%Y"),
                     })
         i += 1
-    # Deduplicate
     seen = set()
     unique = []
     for r in results:
@@ -136,7 +181,6 @@ def _parse_ic_missing_flagged(text: str, min_date=None) -> list:
                 continue
             name   = lines[i + 1]
             course = lines[i + 2]
-            # Check if MISSING flag appears nearby
             window = lines[i:min(i+6, len(lines))]
             if 'MISSING' in window and not course.startswith('Score') \
                     and not course.startswith('Assignment'):
@@ -149,20 +193,191 @@ def _parse_ic_missing_flagged(text: str, min_date=None) -> list:
     return results
 
 
-# ── Scraper ───────────────────────────────────────────────────────────────────
-async def scrape_portal() -> dict:
+# ── Per-student scraper ───────────────────────────────────────────────────────
+async def _scrape_student(page, student: dict) -> dict:
+    """Scrape all data for one student using an already-authenticated page."""
     result = {
-        "student_name":         STUDENT_NAME,
+        "student_name":         student["name"],
+        "student_school":       student.get("school", ""),
+        "student_grade":        student.get("grade", ""),
+        "student_recipients":   student.get("recipients", []),
         "date":                 datetime.now().strftime("%A, %B %d, %Y"),
         "gpa":                  "",
-        "grades":               [],   # [{"course": ..., "grade": ..., "pct": ...}]
-        "missing_assignments":  [],   # [{"course": ..., "assignment": ..., "due": ...}]
-        "absences":             [],   # [{"course": ..., "absences": N, "tardies": N}]
+        "grades":               [],
+        "missing_assignments":  [],
+        "absences":             [],
         "attendance_rate":      "",
-        "upcoming_assignments": [],   # [{"course": ..., "assignment": ..., "due": ...}]
+        "upcoming_assignments": [],
         "error":                None,
     }
+    target = student.get("target", "")
 
+    try:
+        # ── 1. Home page — grades + missing-assignment counts ──────────────────
+        print(f"  → Reading home page (grades & missing assignments)…")
+        await page.goto(HOME_URL, wait_until="networkidle")
+        await page.wait_for_timeout(2000)
+        await _switch_portal_student(page, target)
+
+        body = await page.inner_text("body")
+
+        s2_start = None
+        s2_m = re.search(r'S2\s+(\d{1,2}/\d{1,2}/\d{4})', body)
+        if s2_m:
+            try:
+                s2_start = datetime.strptime(s2_m.group(1), "%m/%d/%Y").date()
+            except ValueError:
+                pass
+
+        gpa_m = re.search(r"([\d.]+)\s*GPA", body)
+        if gpa_m:
+            result["gpa"] = gpa_m.group(1)
+
+        rows = await page.query_selector_all(".tile-contentRowPerformance")
+        for row in rows:
+            name_el = await row.query_selector(".gradeColDetails .courseDetails b")
+            if not name_el:
+                continue
+            course_name = (await name_el.inner_text()).strip()
+
+            if "Embedded Honors" in course_name:
+                continue
+
+            grade_el = await row.query_selector(".gradeCol h3")
+            grade = (await grade_el.inner_text()).strip().lstrip("-") if grade_el else ""
+            if not grade or grade == "N/A":
+                continue
+
+            pct_el = await row.query_selector(".gradeCol p")
+            pct = (await pct_el.inner_text()).strip() if pct_el else ""
+
+            detail_el = await row.query_selector(".gradeColDetails .courseDetails")
+            full_text = (await detail_el.inner_text()).strip() if detail_el else course_name
+            id_m = re.search(r"\((\d{5}-\d+)\)", full_text)
+            course_key = f"{course_name} ({id_m.group(1)})" if id_m else course_name
+
+            result["grades"].append({"course": course_key, "grade": grade, "pct": pct})
+
+            miss_el = await row.query_selector("span[class*='missing'], span[aria-label*='missing']")
+            if not miss_el:
+                row_text = await row.inner_text()
+                miss_m = re.search(r"(\d+)\s+missing assignment", row_text)
+                if miss_m:
+                    count = int(miss_m.group(1))
+                    for _ in range(count):
+                        result["missing_assignments"].append(
+                            {"course": course_key, "assignment": "(see gradebook)", "due": ""}
+                        )
+            else:
+                result["missing_assignments"].append(
+                    {"course": course_key, "assignment": "(see gradebook)", "due": ""}
+                )
+
+        # ── 2. IC Assignments — missing + upcoming ─────────────────────────────
+        print(f"  → Reading Infinite Campus for missing & upcoming assignments…")
+        today = date.today()
+        LAST_DAY_OF_SCHOOL = date(today.year, 5, 30)
+        UPCOMING_WINDOW = today.toordinal() + 45
+
+        try:
+            await page.goto("https://campus.dpsk12.org/campus/icprod.jsp", wait_until="networkidle")
+            await page.wait_for_timeout(5000)
+            await page.click("text=Assignments", timeout=8000)
+            await page.wait_for_timeout(5000)
+
+            frames = page.frames
+            app_frame = next((f for f in frames if "apps/portal/parent" in f.url), None)
+
+            if app_frame:
+                # Switch to target student if needed
+                page_text = await app_frame.inner_text("body")
+                if target and target not in page_text:
+                    try:
+                        btns = await app_frame.query_selector_all("button, [tabindex='0']")
+                        for btn in btns[:5]:
+                            txt = (await btn.inner_text()).strip()
+                            if txt and len(txt) > 3 and "Skip" not in txt:
+                                await btn.click()
+                                await app_frame.wait_for_timeout(1000)
+                                break
+                    except Exception:
+                        pass
+                    try:
+                        await app_frame.click(f"text={target}", timeout=4000)
+                        await app_frame.wait_for_timeout(3000)
+                    except Exception:
+                        pass
+
+                await app_frame.click("text=Missing")
+                await app_frame.wait_for_timeout(2000)
+                missing_text = await app_frame.inner_text("body")
+
+                missing_detail = _parse_ic_assignments(missing_text, min_date=s2_start, max_date=today)
+                missing_raw = _parse_ic_missing_flagged(missing_text, min_date=s2_start)
+                if missing_raw:
+                    missing_detail = missing_raw
+                if missing_detail:
+                    result["missing_assignments"] = missing_detail
+
+                await app_frame.click("text=Missing")
+                await app_frame.wait_for_timeout(1000)
+                await app_frame.click("text=Current Term")
+                await app_frame.wait_for_timeout(3000)
+                for _ in range(3):
+                    await app_frame.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+                    await app_frame.wait_for_timeout(2000)
+                current_text = await app_frame.inner_text("body")
+
+                upcoming_detail = _parse_ic_assignments(
+                    current_text,
+                    min_date=today,
+                    max_date=date.fromordinal(UPCOMING_WINDOW),
+                    exclude_batch_date=LAST_DAY_OF_SCHOOL,
+                )
+                if upcoming_detail:
+                    result["upcoming_assignments"] = sorted(upcoming_detail, key=lambda x: x["due"])
+
+        except Exception as e:
+            print(f"   ⚠ IC assignments fetch failed: {e}")
+
+        # ── 3. Attendance page ─────────────────────────────────────────────────
+        print(f"  → Reading attendance…")
+        await page.goto(ATT_URL, wait_until="networkidle")
+        await page.wait_for_timeout(2000)
+        await _switch_portal_student(page, target)
+
+        att_body = await page.inner_text("body")
+
+        rate_m = re.search(r"([\d.]+%)[^\n]*\d+\.?\d*/\d+\.?\d*\s*days", att_body)
+        if rate_m:
+            result["attendance_rate"] = rate_m.group(1)
+
+        att_pattern = re.compile(
+            r"([A-Za-z][^\n]+?\(\d{5}-\d+\))\nTeacher:[^\n]+\n(\d+)\n(\d+)",
+        )
+        for m in att_pattern.finditer(att_body):
+            course   = m.group(1).strip()
+            absences = int(m.group(2))
+            tardies  = int(m.group(3))
+            if "Embedded Honors" in course:
+                continue
+            if absences > 0 or tardies > 0:
+                result["absences"].append({
+                    "course":   course,
+                    "absences": absences,
+                    "tardies":  tardies,
+                })
+
+    except Exception as e:
+        result["error"] = str(e)
+        print(f"   ✗ Error: {e}")
+
+    return result
+
+
+# ── Main scraper (manages browser lifecycle) ───────────────────────────────────
+async def scrape_all_students() -> list:
+    """Login once, then scrape each student sequentially with the same session."""
     async with async_playwright() as pw:
         browser = await pw.chromium.launch(
             headless=True,
@@ -178,208 +393,36 @@ async def scrape_portal() -> dict:
         page = await context.new_page()
         page.set_default_timeout(25_000)
 
+        results = []
         try:
             print("→ Logging in…")
             await _login(page)
             print("→ Login successful.")
 
-            # ── 1. Home page — grades + missing-assignment counts ──────────────
-            # DOM structure: .tile-contentRowPerformance rows, each containing:
-            #   .gradeCol h3   → letter grade  (or "N/A" for Embedded Honors rows)
-            #   .gradeCol p    → percentage
-            #   .gradeColDetails b → course name
-            #   optional SVG warning icon + missing-assignment span
-            print("→ Reading home page (grades & missing assignments)…")
-            await page.goto(HOME_URL, wait_until="networkidle")
-            await page.wait_for_timeout(2000)
+            for student in STUDENTS:
+                print(f"\n── {student['name']} ────────────────────────────")
+                data = await _scrape_student(page, student)
+                results.append(data)
 
-            body = await page.inner_text("body")
-
-            # Parse S2 start date from "S2 MM/DD/YYYY - MM/DD/YYYY" header
-            s2_start = None
-            s2_m = re.search(r'S2\s+(\d{1,2}/\d{1,2}/\d{4})', body)
-            if s2_m:
-                try:
-                    s2_start = datetime.strptime(s2_m.group(1), "%m/%d/%Y").date()
-                except ValueError:
-                    pass
-
-            # GPA
-            gpa_m = re.search(r"([\d.]+)\s*GPA", body)
-            if gpa_m:
-                result["gpa"] = gpa_m.group(1)
-
-            # Use DOM selectors for accurate grade extraction
-            rows = await page.query_selector_all(".tile-contentRowPerformance")
-            for row in rows:
-                # Course name
-                name_el = await row.query_selector(".gradeColDetails .courseDetails b")
-                if not name_el:
-                    continue
-                course_name = (await name_el.inner_text()).strip()
-
-                # Skip Embedded Honors scheduling rows (they show N/A)
-                if "Embedded Honors" in course_name:
-                    continue
-
-                # Grade (first gradeCol h3)
-                grade_el = await row.query_selector(".gradeCol h3")
-                grade = (await grade_el.inner_text()).strip().lstrip("-") if grade_el else ""
-                if not grade or grade == "N/A":
-                    continue
-
-                # Percentage
-                pct_el = await row.query_selector(".gradeCol p")
-                pct = (await pct_el.inner_text()).strip() if pct_el else ""
-
-                # Course section ID (e.g. "(01371-11)")
-                detail_el = await row.query_selector(".gradeColDetails .courseDetails")
-                full_text = (await detail_el.inner_text()).strip() if detail_el else course_name
-                id_m = re.search(r"\((\d{5}-\d+)\)", full_text)
-                course_key = f"{course_name} ({id_m.group(1)})" if id_m else course_name
-
-                result["grades"].append({"course": course_key, "grade": grade, "pct": pct})
-
-                # Missing assignments — look for warning span in this row
-                miss_el = await row.query_selector("span[class*='missing'], span[aria-label*='missing']")
-                if not miss_el:
-                    # Fallback: check inner text for "missing assignment"
-                    row_text = await row.inner_text()
-                    miss_m = re.search(r"(\d+)\s+missing assignment", row_text)
-                    if miss_m:
-                        count = int(miss_m.group(1))
-                        for _ in range(count):
-                            result["missing_assignments"].append(
-                                {"course": course_key, "assignment": "(see gradebook)", "due": ""}
-                            )
-                else:
-                    result["missing_assignments"].append(
-                        {"course": course_key, "assignment": "(see gradebook)", "due": ""}
-                    )
-
-            # ── 2. IC Assignments — missing + upcoming via Infinite Campus ────────
-            # IC uses SSO from the portal session; assignments live in an iframe
-            # at https://campus.dpsk12.org/campus/apps/portal/parent/assignment-list
-            print("→ Reading Infinite Campus for missing & upcoming assignments…")
-            today = date.today()
-            LAST_DAY_OF_SCHOOL = date(today.year, 5, 30)  # batch-assign date, skip
-            UPCOMING_WINDOW = today.toordinal() + 45       # show up to 45 days out
-
-            try:
-                await page.goto("https://campus.dpsk12.org/campus/icprod.jsp", wait_until="networkidle")
-                await page.wait_for_timeout(5000)
-                await page.click("text=Assignments", timeout=8000)
-                await page.wait_for_timeout(5000)
-
-                # Find the IC app iframe
-                frames = page.frames
-                app_frame = next((f for f in frames if "apps/portal/parent" in f.url), None)
-
-                if app_frame:
-                    # Switch to target student if multiple students on account
-                    page_text = await app_frame.inner_text("body")
-                    if STUDENT_TARGET_NAME and STUDENT_TARGET_NAME not in page_text:
-                        # Click whatever student name is currently shown to open switcher
-                        try:
-                            btns = await app_frame.query_selector_all("button, [tabindex='0']")
-                            for btn in btns[:5]:
-                                txt = (await btn.inner_text()).strip()
-                                if txt and len(txt) > 3 and "Skip" not in txt:
-                                    await btn.click()
-                                    await app_frame.wait_for_timeout(1000)
-                                    break
-                        except Exception:
-                            pass
-                        try:
-                            await app_frame.click(f"text={STUDENT_TARGET_NAME}", timeout=4000)
-                            await app_frame.wait_for_timeout(3000)
-                        except Exception:
-                            pass
-
-                    # ── Missing assignments ────────────────────────────────────
-                    await app_frame.click("text=Missing")
-                    await app_frame.wait_for_timeout(2000)
-                    missing_text = await app_frame.inner_text("body")
-
-                    # Parse date + assignment + course from missing list
-                    missing_detail = _parse_ic_assignments(missing_text, min_date=s2_start, max_date=today)
-                    # Also include any flagged MISSING regardless of date
-                    missing_raw = _parse_ic_missing_flagged(missing_text, min_date=s2_start)
-                    if missing_raw:
-                        missing_detail = missing_raw
-                    if missing_detail:
-                        result["missing_assignments"] = missing_detail
-
-                    # ── Upcoming assignments ───────────────────────────────────
-                    # Deselect "Missing" filter first, then click "Current Term"
-                    # (IC filters are toggles — combining them limits to today only)
-                    await app_frame.click("text=Missing")   # deselect missing filter
-                    await app_frame.wait_for_timeout(1000)
-                    await app_frame.click("text=Current Term")
-                    await app_frame.wait_for_timeout(3000)
-                    # Scroll to bottom to load all future entries
-                    for _ in range(3):
-                        await app_frame.evaluate("window.scrollTo(0, document.body.scrollHeight)")
-                        await app_frame.wait_for_timeout(2000)
-                    current_text = await app_frame.inner_text("body")
-
-                    upcoming_detail = _parse_ic_assignments(
-                        current_text,
-                        min_date=today,
-                        max_date=date.fromordinal(UPCOMING_WINDOW),
-                        exclude_batch_date=LAST_DAY_OF_SCHOOL,
-                    )
-                    if upcoming_detail:
-                        result["upcoming_assignments"] = sorted(upcoming_detail, key=lambda x: x["due"])
-
-            except Exception as e:
-                print(f"   ⚠ IC assignments fetch failed: {e}")
-
-            # ── 3. Attendance page ─────────────────────────────────────────────
-            print("→ Reading attendance…")
-            await page.goto(ATT_URL, wait_until="networkidle")
-            await page.wait_for_timeout(2000)
-
-            att_body = await page.inner_text("body")
-
-            # Attendance rate
-            rate_m = re.search(r"([\d.]+%)[^\n]*\d+\.?\d*/\d+\.?\d*\s*days", att_body)
-            if rate_m:
-                result["attendance_rate"] = rate_m.group(1)
-
-            # Per-class absence table
-            # Pattern: "Course name (ID)\nTeacher: ...\nN_abs\nN_tar"
-            att_pattern = re.compile(
-                r"([A-Za-z][^\n]+?\(\d{5}-\d+\))\nTeacher:[^\n]+\n(\d+)\n(\d+)",
-            )
-            for m in att_pattern.finditer(att_body):
-                course   = m.group(1).strip()
-                absences = int(m.group(2))
-                tardies  = int(m.group(3))
-                if "Embedded Honors" in course:
-                    continue
-                if absences > 0 or tardies > 0:
-                    result["absences"].append({
-                        "course":   course,
-                        "absences": absences,
-                        "tardies":  tardies,
-                    })
-
-        except Exception as e:
-            result["error"] = str(e)
-            print(f"   ✗ Error: {e}")
         finally:
             await browser.close()
 
-    return result
+    return results
 
 
 # ── HTML email builder ────────────────────────────────────────────────────────
 def build_email_html(data: dict) -> str:
     date_str = html_mod.escape(data.get("date", datetime.now().strftime("%A, %B %d, %Y")))
     student  = html_mod.escape(data.get("student_name", "Your Child"))
+    school   = html_mod.escape(data.get("student_school", ""))
+    grade    = html_mod.escape(data.get("student_grade", ""))
     gpa      = html_mod.escape(data.get("gpa", ""))
     error    = html_mod.escape(data.get("error") or "") or None
+
+    school_line = ""
+    if school or grade:
+        parts = [p for p in [school, f"Grade {grade}" if grade else ""] if p]
+        school_line = f'<div style="opacity:0.75;font-size:13px;margin-top:3px;">{" · ".join(parts)}</div>'
 
     # ── Missing assignments section
     missing = data.get("missing_assignments", [])
@@ -406,10 +449,10 @@ def build_email_html(data: dict) -> str:
     else:
         miss_html = '<p style="color:#16a34a;font-style:italic;margin:6px 0;">✓ No missing assignments</p>'
 
-    miss_count  = len(missing)
-    miss_color  = "#dc2626" if miss_count else "#16a34a"
-    miss_bg     = "#fee2e2" if miss_count else "#dcfce7"
-    miss_icon   = "⚠️" if miss_count else "✅"
+    miss_count = len(missing)
+    miss_color = "#dc2626" if miss_count else "#16a34a"
+    miss_bg    = "#fee2e2" if miss_count else "#dcfce7"
+    miss_icon  = "⚠️" if miss_count else "✅"
 
     # ── Grades section
     grades = data.get("grades", [])
@@ -510,7 +553,7 @@ def build_email_html(data: dict) -> str:
   <div style="background:linear-gradient(135deg,#1e3a8a,#2563eb);color:#fff;padding:26px 24px;">
     <div style="font-size:24px;font-weight:700;margin-bottom:4px;">📚 Daily School Summary</div>
     <div style="opacity:0.9;font-size:14px;">{student} · {date_str}{gpa_block}</div>
-    <div style="opacity:0.75;font-size:13px;margin-top:3px;">Denver School of Arts HS · Grade 09</div>
+    {school_line}
   </div>
 
   {error_block}
@@ -569,21 +612,21 @@ def _grade_color(letter: str) -> str:
 
 
 # ── Email sender ──────────────────────────────────────────────────────────────
-def send_email(html: str, subject_date: str) -> None:
+def send_email(html: str, student_name: str, subject_date: str, recipients: list) -> None:
     msg = MIMEMultipart("alternative")
-    msg["Subject"] = f"📚 Daily School Summary — {STUDENT_NAME} — {subject_date}"
+    msg["Subject"] = f"📚 Daily School Summary — {student_name} — {subject_date}"
     msg["From"]    = GMAIL_EMAIL
-    msg["To"]      = ", ".join(RECIPIENT_EMAILS)
+    msg["To"]      = ", ".join(recipients)
     msg.attach(MIMEText(html, "html"))
 
-    print(f"→ Sending email to {', '.join(RECIPIENT_EMAILS)}…")
+    print(f"  → Sending email to {', '.join(recipients)}…")
     with smtplib.SMTP("smtp.gmail.com", 587) as server:
         server.ehlo()
         server.starttls()
         server.ehlo()
         server.login(GMAIL_EMAIL, GMAIL_APP_PW)
-        server.sendmail(GMAIL_EMAIL, RECIPIENT_EMAILS, msg.as_string())
-    print("→ Email sent!")
+        server.sendmail(GMAIL_EMAIL, recipients, msg.as_string())
+    print(f"  → Email sent!")
 
 
 # ── Entry point ───────────────────────────────────────────────────────────────
@@ -592,21 +635,24 @@ async def main() -> None:
     print(f"  DPS Daily School Summary  ·  {datetime.now():%Y-%m-%d %H:%M}")
     print(f"{'='*55}\n")
 
-    data = await scrape_portal()
+    all_data = await scrape_all_students()
 
-    print(f"\n── Results ──────────────────────────────")
-    print(f"  GPA                 : {data.get('gpa','—')}")
-    print(f"  Grades              : {len(data.get('grades', []))} courses")
-    print(f"  Missing assignments : {len(data.get('missing_assignments', []))}")
-    print(f"  Absences recorded   : {len(data.get('absences', []))} courses with absences")
-    print(f"  Upcoming (14 days)  : {len(data.get('upcoming_assignments', []))}")
-    print(f"  Attendance rate     : {data.get('attendance_rate','—')}")
-    if data.get("error"):
-        print(f"  Error               : {data['error']}")
-    print()
+    for data in all_data:
+        print(f"\n── Results: {data['student_name']} ──────────────────────────")
+        print(f"  GPA                 : {data.get('gpa','—')}")
+        print(f"  Grades              : {len(data.get('grades', []))} courses")
+        print(f"  Missing assignments : {len(data.get('missing_assignments', []))}")
+        print(f"  Absences recorded   : {len(data.get('absences', []))} courses with absences")
+        print(f"  Upcoming (14 days)  : {len(data.get('upcoming_assignments', []))}")
+        print(f"  Attendance rate     : {data.get('attendance_rate','—')}")
+        if data.get("error"):
+            print(f"  Error               : {data['error']}")
 
-    html = build_email_html(data)
-    send_email(html, data["date"])
+        # Merge global recipients with any student-specific extras (deduplicated)
+        extra = data.get("student_recipients", [])
+        recipients = list(dict.fromkeys(RECIPIENT_EMAILS + extra))
+        html = build_email_html(data)
+        send_email(html, data["student_name"], data["date"], recipients)
 
     print("\n✓ Done!")
 
