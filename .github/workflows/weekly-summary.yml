@@ -25,11 +25,19 @@ jobs:
 
       - name: Run summary
         env:
-          DPS_USERNAME:        ${{ secrets.DPS_USERNAME }}
-          DPS_PASSWORD:        ${{ secrets.DPS_PASSWORD }}
-          GMAIL_EMAIL:         ${{ secrets.GMAIL_EMAIL }}
-          GMAIL_APP_PASSWORD:  ${{ secrets.GMAIL_APP_PASSWORD }}
-          RECIPIENT_EMAIL:     ${{ secrets.RECIPIENT_EMAIL }}
-          STUDENT_NAME:        ${{ secrets.STUDENT_NAME }}
-          STUDENT_TARGET_NAME: ${{ secrets.STUDENT_TARGET_NAME }}
+          DPS_USERNAME:           ${{ secrets.DPS_USERNAME }}
+          DPS_PASSWORD:           ${{ secrets.DPS_PASSWORD }}
+          GMAIL_EMAIL:            ${{ secrets.GMAIL_EMAIL }}
+          GMAIL_APP_PASSWORD:     ${{ secrets.GMAIL_APP_PASSWORD }}
+          RECIPIENT_EMAIL:        ${{ secrets.RECIPIENT_EMAIL }}
+          STUDENT_1_NAME:         ${{ secrets.STUDENT_1_NAME }}
+          STUDENT_1_TARGET_NAME:  ${{ secrets.STUDENT_1_TARGET_NAME }}
+          STUDENT_1_SCHOOL:       ${{ secrets.STUDENT_1_SCHOOL }}
+          STUDENT_1_GRADE:        ${{ secrets.STUDENT_1_GRADE }}
+          STUDENT_1_RECIPIENTS:   ${{ secrets.STUDENT_1_RECIPIENTS }}
+          STUDENT_2_NAME:         ${{ secrets.STUDENT_2_NAME }}
+          STUDENT_2_TARGET_NAME:  ${{ secrets.STUDENT_2_TARGET_NAME }}
+          STUDENT_2_SCHOOL:       ${{ secrets.STUDENT_2_SCHOOL }}
+          STUDENT_2_GRADE:        ${{ secrets.STUDENT_2_GRADE }}
+          STUDENT_2_RECIPIENTS:   ${{ secrets.STUDENT_2_RECIPIENTS }}
         run: python3 dps_daily_summary.py

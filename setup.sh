@@ -80,8 +80,8 @@ fi
 echo ""
 echo "▶ Scheduling daily run at 7:00 PM..."
 
-CRON_CMD="0 19 * * * $PYTHON $SCRIPT_PATH >> $LOG_PATH 2>&1"
-CRON_COMMENT="# DPS Daily School Summary"
+CRON_CMD="0 19 * * 0 $PYTHON $SCRIPT_PATH >> $LOG_PATH 2>&1"
+CRON_COMMENT="# DPS Weekly School Summary"
 
 # Check if cron entry already exists
 if crontab -l 2>/dev/null | grep -q "dps_daily_summary.py"; then
@@ -89,7 +89,7 @@ if crontab -l 2>/dev/null | grep -q "dps_daily_summary.py"; then
 else
   # Add to crontab
   (crontab -l 2>/dev/null; echo "$CRON_COMMENT"; echo "$CRON_CMD") | crontab -
-  echo "  ✓ Cron job added: runs every day at 7:00 PM"
+  echo "  ✓ Cron job added: runs every Sunday at 7:00 PM"
 fi
 
 # Restrict log file to owner-only access
