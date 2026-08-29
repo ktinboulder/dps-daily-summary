@@ -35,13 +35,18 @@ DPS_USERNAME=your_infinite_campus_username
 DPS_PASSWORD=your_infinite_campus_password
 GMAIL_EMAIL=you@gmail.com
 GMAIL_APP_PASSWORD=xxxx-xxxx-xxxx-xxxx
-RECIPIENT_EMAIL=you@gmail.com,spouse@gmail.com,grandma@yahoo.com
-STUDENT_NAME=Alex
-STUDENT_TARGET_NAME=Alex J. Smith
+RECIPIENT_EMAIL=you@gmail.com,spouse@gmail.com
+
+STUDENT_1_NAME=Alex
+STUDENT_1_TARGET_NAME=Alex J. Smith
+STUDENT_1_SCHOOL=My High School
+STUDENT_1_GRADE=11
+STUDENT_1_RECIPIENTS=alex@icloud.com
 ```
 
-- **`RECIPIENT_EMAIL`** accepts a comma-separated list — send it to the whole family.
-- **`STUDENT_TARGET_NAME`** is the full name as it appears in the portal. Required if your account has multiple students.
+- **`RECIPIENT_EMAIL`** — shared recipients who get every student's summary (parents, guardians).
+- **`STUDENT_N_TARGET_NAME`** — full name as it appears in the portal switcher. Required on multi-student accounts.
+- **`STUDENT_N_RECIPIENTS`** — optional, student-specific extra recipients (e.g. the student themselves). Merged with `RECIPIENT_EMAIL`.
 - Get your Gmail App Password at myaccount.google.com → Security → App passwords.
 
 ## Run manually
@@ -61,7 +66,25 @@ crontab -e    # edit or remove
 
 ## Multi-student accounts
 
-If your portal account has more than one student, set `STUDENT_TARGET_NAME` to the full name of the student you want — exactly as it appears in the portal switcher. The script will select that student automatically.
+Add a numbered block for each student. Numbering starts at 1 and must be consecutive:
+
+```
+RECIPIENT_EMAIL=you@gmail.com,spouse@gmail.com
+
+STUDENT_1_NAME=Alex
+STUDENT_1_TARGET_NAME=Alex J. Smith
+STUDENT_1_SCHOOL=East High School
+STUDENT_1_GRADE=11
+STUDENT_1_RECIPIENTS=alex@icloud.com
+
+STUDENT_2_NAME=Jordan
+STUDENT_2_TARGET_NAME=Jordan M. Smith
+STUDENT_2_SCHOOL=West Middle School
+STUDENT_2_GRADE=8
+STUDENT_2_RECIPIENTS=jordan@icloud.com
+```
+
+The script logs in once and scrapes each student in sequence. Each student gets their own email — `RECIPIENT_EMAIL` recipients (shared) plus any `STUDENT_N_RECIPIENTS` (student-specific). Siblings don't receive each other's summaries.
 
 ## Using with Claude Code
 
